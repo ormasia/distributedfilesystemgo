@@ -13,23 +13,25 @@ import (
 	"github.com/anthdm/foreverstore/p2p"
 )
 
+// 负责配置参数，在创建时传入
 type FileServerOpts struct {
 	ID                string
-	EncKey            []byte
+	EncKey            []byte // 非对称加密密钥
 	StorageRoot       string
 	PathTransformFunc PathTransformFunc
 	Transport         p2p.Transport
 	BootstrapNodes    []string
 }
 
+// 实际服务结构体 - 包含配置 + 运行时状态
 type FileServer struct {
 	FileServerOpts
 
 	peerLock sync.Mutex
-	peers    map[string]p2p.Peer
+	peers    map[string]p2p.Peer // 节点列表
 
-	store  *Store
-	quitch chan struct{}
+	store  *Store        // 数据存储
+	quitch chan struct{} // 退出信号
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -50,6 +52,7 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 	}
 }
 
+// 广播消息给所有节点
 func (s *FileServer) broadcast(msg *Message) error {
 	buf := new(bytes.Buffer)
 	if err := gob.NewEncoder(buf).Encode(msg); err != nil {
@@ -57,7 +60,8 @@ func (s *FileServer) broadcast(msg *Message) error {
 	}
 
 	for _, peer := range s.peers {
-		peer.Send([]byte{p2p.IncomingMessage})
+		// 为什么先发一个消息类型，然后再发送字节流？
+		peer.Send([]byte{p2p.IncomingMessage}) // 为什么要进去一个0x1？因为0x1表示消息类型
 		if err := peer.Send(buf.Bytes()); err != nil {
 			return err
 		}
@@ -71,9 +75,9 @@ type Message struct {
 }
 
 type MessageStoreFile struct {
-	ID   string
+	ID   string // 16bytes
 	Key  string
-	Size int64
+	Size int64 // 8bytes
 }
 
 type MessageGetFile struct {
@@ -81,7 +85,9 @@ type MessageGetFile struct {
 	Key string
 }
 
+// 从文件服务器获取文件
 func (s *FileServer) Get(key string) (io.Reader, error) {
+	// 首先判断本地是否存在文件
 	if s.store.Has(s.ID, key) {
 		fmt.Printf("[%s] serving file (%s) from local disk\n", s.Transport.Addr(), key)
 		_, r, err := s.store.Read(s.ID, key)
@@ -96,7 +102,7 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 			Key: hashKey(key),
 		},
 	}
-
+	// 根据本节点的peers列表做广播
 	if err := s.broadcast(&msg); err != nil {
 		return nil, err
 	}
@@ -109,20 +115,22 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 		var fileSize int64
 		binary.Read(peer, binary.LittleEndian, &fileSize)
 
+		// 从节点读取文件内容，写入本地文件中，本地文件直接在函数中拼写好路径了，不需要手动写入路径了
 		n, err := s.store.WriteDecrypt(s.EncKey, s.ID, key, io.LimitReader(peer, fileSize))
 		if err != nil {
 			return nil, err
 		}
 
 		fmt.Printf("[%s] received (%d) bytes over the network from (%s)", s.Transport.Addr(), n, peer.RemoteAddr())
-
+		// 关闭流
 		peer.CloseStream()
 	}
-
+	// 已经读取到本地了，读取后返回
 	_, r, err := s.store.Read(s.ID, key)
 	return r, err
 }
 
+// 将文件存储到文件服务器中
 func (s *FileServer) Store(key string, r io.Reader) error {
 	var (
 		fileBuffer = new(bytes.Buffer)
@@ -138,16 +146,18 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 		Payload: MessageStoreFile{
 			ID:   s.ID,
 			Key:  hashKey(key),
-			Size: size + 16,
+			Size: size + 16, // 因为加密产生的字节数会多16字节
 		},
 	}
 
-	if err := s.broadcast(&msg); err != nil {
+	// 把文件的元信息广播给所有节点
+	if err = s.broadcast(&msg); err != nil {
 		return err
 	}
 
 	time.Sleep(time.Millisecond * 5)
 
+	// 写给该节点所有的peers节点
 	peers := []io.Writer{}
 	for _, peer := range s.peers {
 		peers = append(peers, peer)
@@ -164,10 +174,12 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 	return nil
 }
 
+// 关闭通道后，所有从该通道接收数据的操作都会立即返回（接收到零值和一个表示通道已关闭的标志）
 func (s *FileServer) Stop() {
 	close(s.quitch)
 }
 
+// 当有连接新的节点时，将该节点添加到节点列表中
 func (s *FileServer) OnPeer(p p2p.Peer) error {
 	s.peerLock.Lock()
 	defer s.peerLock.Unlock()
@@ -186,7 +198,7 @@ func (s *FileServer) loop() {
 	}()
 
 	for {
-		select {
+		select { // 有没有default决定了是否阻塞
 		case rpc := <-s.Transport.Consume():
 			var msg Message
 			if err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg); err != nil {
@@ -202,6 +214,7 @@ func (s *FileServer) loop() {
 	}
 }
 
+// 处理消息
 func (s *FileServer) handleMessage(from string, msg *Message) error {
 	switch v := msg.Payload.(type) {
 	case MessageStoreFile:
@@ -213,6 +226,7 @@ func (s *FileServer) handleMessage(from string, msg *Message) error {
 	return nil
 }
 
+// 读取文件的处理函数
 func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
 	if !s.store.Has(msg.ID, msg.Key) {
 		return fmt.Errorf("[%s] need to serve file (%s) but it does not exist on disk", s.Transport.Addr(), msg.Key)
@@ -225,7 +239,7 @@ func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error
 		return err
 	}
 
-	if rc, ok := r.(io.ReadCloser); ok {
+	if rc, ok := r.(io.ReadCloser); ok { // 确保r实现了io.ReadCloser接口，否则关闭流会报错
 		fmt.Println("closing readCloser")
 		defer rc.Close()
 	}
@@ -237,9 +251,9 @@ func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error
 
 	// First send the "incomingStream" byte to the peer and then we can send
 	// the file size as an int64.
-	peer.Send([]byte{p2p.IncomingStream})
-	binary.Write(peer, binary.LittleEndian, fileSize)
-	n, err := io.Copy(peer, r)
+	peer.Send([]byte{p2p.IncomingStream})             // 发送的类型是流式
+	binary.Write(peer, binary.LittleEndian, fileSize) // 将fileSize发送给对端
+	n, err := io.Copy(peer, r)                        // 将实际的文件内容发送给到peer中
 	if err != nil {
 		return err
 	}
@@ -249,12 +263,15 @@ func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error
 	return nil
 }
 
+// 将文件存储到文件服务器中，从reader中读取文件内容然后写入到本地磁盘中
 func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) error {
 	peer, ok := s.peers[from]
 	if !ok {
 		return fmt.Errorf("peer (%s) could not be found in the peer list", from)
 	}
 
+	// reader读取数据
+	// io.LimitReader(peer, msg.Size) 限制读取的字节数
 	n, err := s.store.Write(msg.ID, msg.Key, io.LimitReader(peer, msg.Size))
 	if err != nil {
 		return err
@@ -262,11 +279,13 @@ func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) e
 
 	fmt.Printf("[%s] written %d bytes to disk\n", s.Transport.Addr(), n)
 
+	// 关闭这个流，因为我们已经读取了所有的数据
 	peer.CloseStream()
 
 	return nil
 }
 
+// 引导网络，根据起始节点建立tcp连接
 func (s *FileServer) bootstrapNetwork() error {
 	for _, addr := range s.BootstrapNodes {
 		if len(addr) == 0 {
@@ -284,9 +303,11 @@ func (s *FileServer) bootstrapNetwork() error {
 	return nil
 }
 
+// 启动文件服务器
 func (s *FileServer) Start() error {
 	fmt.Printf("[%s] starting fileserver...\n", s.Transport.Addr())
 
+	// tcp协议&自定义解析格式
 	if err := s.Transport.ListenAndAccept(); err != nil {
 		return err
 	}
