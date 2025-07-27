@@ -85,7 +85,7 @@ func (s *Store) openFileForWriting(id string, key string) (*os.File, error) {
 	return os.Create(fullPathWithRoot)
 }
 
-// 修改readStream方法
+// 返回文件大小，文件句柄，错误
 func (s *Store) readStream(id string, key string) (int64, io.ReadCloser, error) {
 	pathKey := s.PathTransformFunc(key)
 	fullPathWithRoot := filepath.Join(s.Root, id, pathKey.FullPath())
@@ -103,6 +103,7 @@ func (s *Store) readStream(id string, key string) (int64, io.ReadCloser, error) 
 	return fi.Size(), file, nil
 }
 
+// 路径转换函数？
 type PathTransformFunc func(string) PathKey
 
 type PathKey struct {
@@ -148,7 +149,7 @@ func (s *Store) Write(id string, key string, r io.Reader) (int64, error) {
 	return s.writeStream(id, key, r)
 }
 
-// 修复writeStream方法
+// 调用openFileForWriting写入文件
 func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
 	f, err := s.openFileForWriting(id, key)
 	if err != nil {
@@ -158,7 +159,7 @@ func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
 	return io.Copy(f, r)
 }
 
-// 修复WriteDecrypt方法
+// 写入解密后的文件
 func (s *Store) WriteDecrypt(encKey []byte, id string, key string, r io.Reader) (int64, error) {
 	f, err := s.openFileForWriting(id, key)
 	if err != nil {
