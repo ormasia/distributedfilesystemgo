@@ -3,8 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/anthdm/foreverstore/p2p"
@@ -18,9 +19,12 @@ func makeServer(listenAddr string, nodes ...string) *FileServer {
 	}
 	tcpTransport := p2p.NewTCPTransport(tcptransportOpts)
 
+	// 将冒号替换为下划线，使其在Windows下合法
+	storageRoot := strings.ReplaceAll(listenAddr, ":", "_") + "_network"
+
 	fileServerOpts := FileServerOpts{
 		EncKey:            newEncryptionKey(),
-		StorageRoot:       listenAddr + "_network",
+		StorageRoot:       storageRoot,
 		PathTransformFunc: CASPathTransformFunc,
 		Transport:         tcpTransport,
 		BootstrapNodes:    nodes,
@@ -61,7 +65,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		b, err := ioutil.ReadAll(r)
+		b, err := io.ReadAll(r)
 		if err != nil {
 			log.Fatal(err)
 		}

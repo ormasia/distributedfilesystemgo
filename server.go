@@ -142,7 +142,7 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 		},
 	}
 
-	if err := s.broadcast(&msg); err != nil {
+	if err = s.broadcast(&msg); err != nil {
 		return err
 	}
 

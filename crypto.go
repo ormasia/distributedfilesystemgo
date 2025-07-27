@@ -35,9 +35,9 @@ func copyStream(stream cipher.Stream, blockSize int, src io.Reader, dst io.Write
 		n, err := src.Read(buf)
 		if n > 0 {
 			stream.XORKeyStream(buf, buf[:n])
-			nn, err := dst.Write(buf[:n])
-			if err != nil {
-				return 0, err
+			nn, Werr := dst.Write(buf[:n])
+			if Werr != nil {
+				return 0, Werr
 			}
 			nw += nn
 		}
