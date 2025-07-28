@@ -155,8 +155,8 @@ func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close() // 确保文件句柄被关闭
-	return io.Copy(f, r)
+	defer f.Close()      // 确保文件句柄被关闭
+	return io.Copy(f, r) // io.copy用来流式写入文件
 }
 
 // 写入解密后的文件

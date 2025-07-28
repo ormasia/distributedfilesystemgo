@@ -29,7 +29,7 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 }
 
 func (p *TCPPeer) CloseStream() {
-	p.wg.Done()
+	p.wg.Done() // 每次处理连接新建一个goroutine，所以这里要减1
 }
 
 func (p *TCPPeer) Send(b []byte) error {
@@ -81,7 +81,7 @@ func (t *TCPTransport) Dial(addr string) error {
 		return err
 	}
 
-	go t.handleConn(conn, true)
+	go t.handleConn(conn, true) // 开启一个goroutine来处理连接
 
 	return nil
 }
